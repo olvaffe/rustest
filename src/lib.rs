@@ -4,7 +4,7 @@
 use std::{
     cmp, ffi, fs,
     io::{self, Seek},
-    os::fd::{AsFd, AsRawFd},
+    os::fd::{AsFd, AsRawFd, RawFd},
     ptr, slice,
 };
 
@@ -19,17 +19,20 @@ impl Mmap {
         let len = fp.seek(io::SeekFrom::End(0))? as usize;
         let fd = fp.as_fd();
 
+        Self::mmap_raw(len, libc::MAP_SHARED, fd.as_raw_fd())
+    }
+
+    pub fn anonymous(len: usize) -> Result<Self, io::Error> {
+        Self::mmap_raw(len, libc::MAP_SHARED | libc::MAP_ANONYMOUS, -1)
+    }
+
+    fn mmap_raw(len: usize, flags: i32, fd: RawFd) -> Result<Self, io::Error> {
+        let addr = ptr::null_mut();
+        let prot = libc::PROT_READ;
+        let offset = 0;
+
         // SAFETY: all args are valid
-        let addr = unsafe {
-            libc::mmap(
-                ptr::null_mut(),
-                len,
-                libc::PROT_READ,
-                libc::MAP_SHARED,
-                fd.as_raw_fd(),
-                0,
-            )
-        };
+        let addr = unsafe { libc::mmap(addr, len, prot, flags, fd, offset) };
         if addr == libc::MAP_FAILED {
             return Err(io::Error::last_os_error());
         }
@@ -40,6 +43,16 @@ impl Mmap {
     fn as_bytes(&self) -> &[u8] {
         // SAFETY: we control self
         unsafe { slice::from_raw_parts(self.addr as _, self.len) }
+    }
+
+    pub fn mlock(&self) -> Result<(), io::Error> {
+        // SAFETY: we control self
+        let ret = unsafe { libc::mlock(self.addr, self.len) };
+        if ret != 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        Ok(())
     }
 
     pub fn populate(&self) -> Result<(), io::Error> {

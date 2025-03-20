@@ -5,9 +5,13 @@ edition = "2024"
 license = "MIT"
 
 [[bin]]
+name = "mlock"
+
+[[bin]]
 name = "pgmajfault"
 
 [dependencies]
+crossterm = "0.28"
 libc = "0.2"
 
 [lints.clippy]
