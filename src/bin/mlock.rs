@@ -25,14 +25,16 @@ impl Mlock {
     }
 
     fn add(&mut self, heap: MlockHeap) -> Result<(), io::Error> {
-        let mmap = rustest::Mmap::anonymous(CHUNK_SIZE_MB * 1024 * 1024)?;
-        if let MlockHeap::Locked = heap {
-            mmap.mlock()?;
-        }
-
+        let mut mmap = rustest::Mmap::anonymous(CHUNK_SIZE_MB * 1024 * 1024)?;
         match heap {
-            MlockHeap::Locked => self.locked.push(mmap),
-            MlockHeap::Unlocked => self.unlocked.push(mmap),
+            MlockHeap::Locked => {
+                mmap.mlock()?;
+                self.locked.push(mmap);
+            }
+            MlockHeap::Unlocked => {
+                mmap.fill((self.unlocked.len() + 1) as u8);
+                self.unlocked.push(mmap);
+            }
         }
 
         Ok(())

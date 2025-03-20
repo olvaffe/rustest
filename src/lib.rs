@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 use std::{
-    cmp, ffi, fs,
+    ffi, fs,
     io::{self, Seek},
     os::fd::{AsFd, AsRawFd, RawFd},
     ptr, slice,
@@ -19,16 +19,20 @@ impl Mmap {
         let len = fp.seek(io::SeekFrom::End(0))? as usize;
         let fd = fp.as_fd();
 
-        Self::mmap_raw(len, libc::MAP_SHARED, fd.as_raw_fd())
+        Self::mmap_raw(len, libc::PROT_READ, libc::MAP_SHARED, fd.as_raw_fd())
     }
 
     pub fn anonymous(len: usize) -> Result<Self, io::Error> {
-        Self::mmap_raw(len, libc::MAP_SHARED | libc::MAP_ANONYMOUS, -1)
+        Self::mmap_raw(
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+        )
     }
 
-    fn mmap_raw(len: usize, flags: i32, fd: RawFd) -> Result<Self, io::Error> {
+    fn mmap_raw(len: usize, prot: i32, flags: i32, fd: RawFd) -> Result<Self, io::Error> {
         let addr = ptr::null_mut();
-        let prot = libc::PROT_READ;
         let offset = 0;
 
         // SAFETY: all args are valid
@@ -38,11 +42,6 @@ impl Mmap {
         }
 
         Ok(Mmap { addr, len })
-    }
-
-    fn as_bytes(&self) -> &[u8] {
-        // SAFETY: we control self
-        unsafe { slice::from_raw_parts(self.addr as _, self.len) }
     }
 
     pub fn mlock(&self) -> Result<(), io::Error> {
@@ -55,22 +54,30 @@ impl Mmap {
         Ok(())
     }
 
+    pub fn munlock(&self) {
+        // SAFETY: we control self
+        unsafe { libc::munlock(self.addr, self.len) };
+    }
+
     pub fn populate(&self) -> Result<(), io::Error> {
-        let mut buf = Box::<[u8]>::new_uninit_slice(4096);
-        let src = self.as_bytes();
-
-        let mut offset = 0;
-        while offset < self.len {
-            let copy = cmp::min(self.len - offset, buf.len());
-
-            // SAFETY: all args are valid
-            let _ =
-                unsafe { libc::memcpy(buf.as_mut_ptr() as _, src[offset..].as_ptr() as _, copy) };
-
-            offset += copy;
-        }
+        self.mlock()?;
+        self.munlock();
 
         Ok(())
+    }
+
+    pub fn fill(&mut self, val: u8) {
+        let mut page_size = unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) } as usize;
+        if page_size <= 0 {
+            page_size = 4096;
+        }
+
+        // SAFETY: we control self
+        let bytes = unsafe { slice::from_raw_parts_mut(self.addr as _, self.len) };
+        let page_count = (bytes.len() + page_size - 1) / page_size;
+        for page in 0..page_count {
+            bytes[page * page_size] = val;
+        }
     }
 }
 
