@@ -4,7 +4,6 @@
 use std::{
     cmp, env, ffi, fs,
     io::{self, Seek},
-    mem,
     os::fd::{AsFd, AsRawFd},
     ptr, slice,
 };
@@ -44,21 +43,16 @@ impl Mmap {
     }
 
     fn populate(&self) -> Result<(), io::Error> {
-        const BUF_SIZE: usize = 4096;
-        let mut buf = Box::new(mem::MaybeUninit::<[u8; BUF_SIZE]>::uninit());
+        let mut buf = Box::<[u8]>::new_uninit_slice(4096);
         let src = self.as_bytes();
 
         let mut offset = 0;
         while offset < self.len {
-            let copy = cmp::min(self.len - offset, BUF_SIZE);
+            let copy = cmp::min(self.len - offset, buf.len());
 
-            let buf_ptr = buf.as_mut_ptr();
-            // SAFETY: I guess so?
-            let mut buf_arr = unsafe { *buf_ptr };
             // SAFETY: all args are valid
-            let _ = unsafe {
-                libc::memcpy(buf_arr.as_mut_ptr() as _, src[offset..].as_ptr() as _, copy)
-            };
+            let _ =
+                unsafe { libc::memcpy(buf.as_mut_ptr() as _, src[offset..].as_ptr() as _, copy) };
 
             offset += copy;
         }
