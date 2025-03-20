@@ -1,0 +1,15 @@
+[package]
+name = "rustest"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[[bin]]
+name = "pgmajfault"
+
+[dependencies]
+libc = "0.2"
+
+[lints.clippy]
+multiple_unsafe_ops_per_block = "deny"
+undocumented_unsafe_blocks = "deny"
