@@ -120,6 +120,15 @@ fn term_wait_action() -> Action {
     }
 }
 
+fn print_help() {
+    println!("usage:");
+    println!("  +/-: add/remove locked mappings");
+    println!("  ]/[: add/remove unlocked mappings");
+    println!("  p: page in unlocked mappings");
+    println!("  q: quit");
+    println!();
+}
+
 fn main() -> Result<(), io::Error> {
     let init_mb: usize = env::args()
         .nth(1)
@@ -131,6 +140,8 @@ fn main() -> Result<(), io::Error> {
     for _ in 0..init_count {
         let _ = mlock.add(MlockHeap::Locked);
     }
+
+    print_help();
 
     term_init()?;
 
