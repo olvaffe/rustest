@@ -114,7 +114,6 @@ fn print_help() {
     println!("  ]/[: add/remove unlocked mappings");
     println!("  p: page in unlocked mappings");
     println!("  q: quit");
-    println!();
 }
 
 fn main() -> Result<(), io::Error> {
@@ -130,12 +129,12 @@ fn main() -> Result<(), io::Error> {
     }
 
     print_help();
+    println!();
 
     let mut term = rustest::Term::new()?;
 
     loop {
-        term.cmd_clear();
-        term.cmd_fmt(format_args!("{}", &mlock));
+        term.cmd_fmt(format_args!("{}\r\n", &mlock));
         term.cmd_flush();
 
         match term_wait_action(&mut term) {
@@ -153,6 +152,8 @@ fn main() -> Result<(), io::Error> {
                 mlock.page_in();
             }
         }
+
+        term.cmd_clear(1);
     }
 
     term.reset();

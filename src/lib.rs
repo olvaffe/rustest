@@ -103,7 +103,7 @@ impl Term {
         terminal::enable_raw_mode()?;
 
         let mut writer = io::stdout();
-        execute!(writer, cursor::Hide, cursor::SavePosition).inspect_err(|_| {
+        execute!(writer, cursor::Hide).inspect_err(|_| {
             let _ = terminal::disable_raw_mode();
         })?;
 
@@ -115,10 +115,11 @@ impl Term {
         let _ = terminal::disable_raw_mode();
     }
 
-    pub fn cmd_clear(&mut self) {
+    pub fn cmd_clear(&mut self, rows: u32) {
         let _ = queue!(
             self.writer,
-            cursor::RestorePosition,
+            cursor::MoveToColumn(0),
+            cursor::MoveUp(rows as _),
             terminal::Clear(terminal::ClearType::FromCursorDown)
         );
     }
