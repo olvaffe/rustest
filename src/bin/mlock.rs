@@ -148,7 +148,7 @@ fn main() -> Result<(), io::Error> {
                 mlock.remove(heap);
             }
             Action::PageIn => {
-                term.cmd_fmt(format_args!(" ... paging in ..."));
+                term.cmd_str(" ... paging in ...");
                 term.cmd_flush();
                 mlock.page_in();
             }

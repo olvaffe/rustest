@@ -127,6 +127,10 @@ impl Term {
         let _ = self.writer.write_fmt(args);
     }
 
+    pub fn cmd_str(&mut self, s: &str) {
+        let _ = self.writer.write_all(s.as_bytes());
+    }
+
     pub fn cmd_flush(&mut self) {
         let _ = self.writer.flush();
     }
