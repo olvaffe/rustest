@@ -9,6 +9,12 @@ use std::{
     ptr, slice, time,
 };
 
+pub fn page_size() -> usize {
+    // SAFETY: valid sysconf call
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) } as usize;
+    if page_size > 0 { page_size } else { 4096 }
+}
+
 pub struct Mmap {
     addr: *mut ffi::c_void,
     len: usize,
@@ -68,10 +74,7 @@ impl Mmap {
     }
 
     pub fn fill(&mut self, val: u8) {
-        let mut page_size = unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) } as usize;
-        if page_size <= 0 {
-            page_size = 4096;
-        }
+        let page_size = page_size();
 
         // SAFETY: we control self
         let bytes = unsafe { slice::from_raw_parts_mut(self.addr as _, self.len) };

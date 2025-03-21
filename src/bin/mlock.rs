@@ -72,6 +72,67 @@ impl fmt::Display for Mlock {
     }
 }
 
+struct Proc {
+    page_size: usize,
+
+    nr_inactive_anon: u64,
+    nr_active_anon: u64,
+    nr_unevictable: u64,
+}
+
+impl Proc {
+    fn collect() -> Self {
+        let mut pid = Proc {
+            page_size: rustest::page_size(),
+            nr_inactive_anon: 0,
+            nr_active_anon: 0,
+            nr_unevictable: 0,
+        };
+
+        let _ = pid.collect_vmstat();
+
+        pid
+    }
+
+    fn collect_vmstat(&mut self) -> Result<(), io::Error> {
+        let fp = fs::File::open("/proc/vmstat")?;
+        let reader = io::BufReader::new(fp);
+
+        for line in reader.lines() {
+            let line = line?;
+
+            if let Some(val) = line.strip_prefix("nr_inactive_anon ") {
+                self.nr_inactive_anon = val.parse().unwrap_or_default();
+            } else if let Some(val) = line.strip_prefix("nr_active_anon ") {
+                self.nr_active_anon = val.parse().unwrap_or_default();
+            } else if let Some(val) = line.strip_prefix("nr_unevictable ") {
+                self.nr_unevictable = val.parse().unwrap_or_default();
+                break;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::Display for Proc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        let [inactive_mb, active_mb, unevictable_mb] = [
+            self.nr_inactive_anon,
+            self.nr_active_anon,
+            self.nr_unevictable,
+        ]
+        .map(|page_count| (page_count as usize) * self.page_size / 1024 / 1024);
+        write!(
+            f,
+            "unevictable {} MB, anonymous {} MB, total {} MB",
+            unevictable_mb,
+            inactive_mb + active_mb,
+            unevictable_mb + inactive_mb + active_mb,
+        )
+    }
+}
+
 struct ProcSelf {
     // VmRSS = RssAnon + RssFile + RssShmem, although we only use RssAnon
     vm_rss: u64,
@@ -195,10 +256,12 @@ fn main() -> Result<(), io::Error> {
     let mut term = rustest::Term::new()?;
 
     loop {
+        let sys = Proc::collect();
         let pid = ProcSelf::collect();
 
-        term.cmd_fmt(format_args!("app: {}\r\n", &mlock));
-        term.cmd_fmt(format_args!("/proc/self: {}\r\n", &pid));
+        term.cmd_fmt(format_args!("system: {}\r\n", &sys));
+        term.cmd_fmt(format_args!("self: {}\r\n", &pid));
+        term.cmd_fmt(format_args!("{}\r\n", &mlock));
         term.cmd_flush();
 
         match term_wait_action(&mut term) {
@@ -217,7 +280,7 @@ fn main() -> Result<(), io::Error> {
             }
         }
 
-        term.cmd_clear(2);
+        term.cmd_clear(3);
     }
 
     term.reset();
