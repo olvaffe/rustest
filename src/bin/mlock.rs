@@ -247,7 +247,7 @@ impl fmt::Display for ProcSelf {
             f,
             "locked {:5} MB, unlocked {:5} MB, swap {:5} MB",
             vm_lck,
-            rss_anon - vm_lck,
+            rss_anon.checked_sub(vm_lck).unwrap_or(0),
             vm_swap,
         )
     }
