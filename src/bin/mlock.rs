@@ -62,18 +62,21 @@ impl fmt::Display for Mlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         let [locked_mb, unlocked_mb] =
             [self.locked.len(), self.unlocked.len()].map(|len| len * CHUNK_SIZE_MB);
-        write!(f, "locked {} MB, unlocked {} MB", locked_mb, unlocked_mb,)
+        write!(
+            f,
+            "locked {:5} MB, unlocked {:5} MB",
+            locked_mb, unlocked_mb,
+        )
     }
 }
 
 struct Proc {
     page_size: usize,
 
-    active: u64,
-    inactive: u64,
     mlocked: u64,
     swap_total: u64,
     swap_free: u64,
+    anon_pages: u64,
 
     pswpin: u64,
     pswpout: u64,
@@ -87,11 +90,10 @@ impl Proc {
         let mut proc = Proc {
             page_size: rustest::page_size(),
 
-            active: 0,
-            inactive: 0,
             mlocked: 0,
             swap_total: 0,
             swap_free: 0,
+            anon_pages: 0,
 
             pswpin: 0,
             pswpout: 0,
@@ -125,16 +127,14 @@ impl Proc {
                     .unwrap_or_default()
             };
 
-            if line.starts_with("Active:") {
-                self.active = extract_val(&line);
-            } else if line.starts_with("Inactive:") {
-                self.inactive = extract_val(&line);
-            } else if line.starts_with("Mlocked:") {
+            if line.starts_with("Mlocked:") {
                 self.mlocked = extract_val(&line);
             } else if line.starts_with("SwapTotal:") {
                 self.swap_total = extract_val(&line);
             } else if line.starts_with("SwapFree:") {
                 self.swap_free = extract_val(&line);
+            } else if line.starts_with("AnonPages:") {
+                self.anon_pages = extract_val(&line);
                 break;
             }
         }
@@ -162,12 +162,11 @@ impl Proc {
 
 impl fmt::Display for Proc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        let [active, inactive, mlocked, swap_total, swap_free] = [
-            self.active,
-            self.inactive,
+        let [mlocked, swap_total, swap_free, anon_pages] = [
             self.mlocked,
             self.swap_total,
             self.swap_free,
+            self.anon_pages,
         ]
         .map(|kb| kb / 1024);
 
@@ -176,9 +175,9 @@ impl fmt::Display for Proc {
 
         write!(
             f,
-            "locked {} MB, unlocked {} MB, swap {} MB, swap i/o +{}/+{} MB",
+            "locked {:5} MB, unlocked {:5} MB, swap {:5} MB, swap i/o +{}/+{} MB",
             mlocked,
-            active + inactive,
+            anon_pages - mlocked,
             swap_total - swap_free,
             swap_in,
             swap_out,
@@ -239,7 +238,7 @@ impl fmt::Display for ProcSelf {
             [self.vm_lck, self.vm_rss, self.vm_swap].map(|kb| kb / 1024);
         write!(
             f,
-            "locked {} MB, unlocked {} MB, swap {} MB",
+            "locked {:5} MB, unlocked {:5} MB, swap {:5} MB",
             vm_lck,
             vm_rss - vm_lck,
             vm_swap,
