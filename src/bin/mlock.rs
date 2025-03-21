@@ -62,38 +62,85 @@ impl fmt::Display for Mlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         let [locked_mb, unlocked_mb] =
             [self.locked.len(), self.unlocked.len()].map(|len| len * CHUNK_SIZE_MB);
-        write!(
-            f,
-            "locked {} MB, unlocked {} MB, total {} MB",
-            locked_mb,
-            unlocked_mb,
-            locked_mb + unlocked_mb,
-        )
+        write!(f, "locked {} MB, unlocked {} MB", locked_mb, unlocked_mb,)
     }
 }
 
 struct Proc {
     page_size: usize,
 
-    nr_inactive_anon: u64,
-    nr_active_anon: u64,
-    nr_unevictable: u64,
+    active: u64,
+    inactive: u64,
+    mlocked: u64,
+    swap_total: u64,
+    swap_free: u64,
+
+    pswpin: u64,
+    pswpout: u64,
+
+    pswpin_delta: u64,
+    pswpout_delta: u64,
 }
 
 impl Proc {
-    fn collect() -> Self {
-        let mut pid = Proc {
+    fn collect(prev: Option<Proc>) -> Self {
+        let mut proc = Proc {
             page_size: rustest::page_size(),
-            nr_inactive_anon: 0,
-            nr_active_anon: 0,
-            nr_unevictable: 0,
+
+            active: 0,
+            inactive: 0,
+            mlocked: 0,
+            swap_total: 0,
+            swap_free: 0,
+
+            pswpin: 0,
+            pswpout: 0,
+
+            pswpin_delta: 0,
+            pswpout_delta: 0,
         };
 
-        let _ = pid.collect_vmstat();
+        let _ = proc.collect_meminfo();
+        let _ = proc.collect_vmstat();
 
-        pid
+        if let Some(prev) = prev {
+            proc.pswpin_delta = proc.pswpin - prev.pswpin;
+            proc.pswpout_delta = proc.pswpout - prev.pswpout;
+        }
+
+        proc
     }
 
+    fn collect_meminfo(&mut self) -> Result<(), io::Error> {
+        let fp = fs::File::open("/proc/meminfo")?;
+        let reader = io::BufReader::new(fp);
+
+        for line in reader.lines() {
+            let line = line?;
+
+            let extract_val = |line: &str| {
+                line.split_ascii_whitespace()
+                    .nth(1)
+                    .and_then(|val| val.parse::<u64>().ok())
+                    .unwrap_or_default()
+            };
+
+            if line.starts_with("Active:") {
+                self.active = extract_val(&line);
+            } else if line.starts_with("Inactive:") {
+                self.inactive = extract_val(&line);
+            } else if line.starts_with("Mlocked:") {
+                self.mlocked = extract_val(&line);
+            } else if line.starts_with("SwapTotal:") {
+                self.swap_total = extract_val(&line);
+            } else if line.starts_with("SwapFree:") {
+                self.swap_free = extract_val(&line);
+                break;
+            }
+        }
+
+        Ok(())
+    }
     fn collect_vmstat(&mut self) -> Result<(), io::Error> {
         let fp = fs::File::open("/proc/vmstat")?;
         let reader = io::BufReader::new(fp);
@@ -101,12 +148,10 @@ impl Proc {
         for line in reader.lines() {
             let line = line?;
 
-            if let Some(val) = line.strip_prefix("nr_inactive_anon ") {
-                self.nr_inactive_anon = val.parse().unwrap_or_default();
-            } else if let Some(val) = line.strip_prefix("nr_active_anon ") {
-                self.nr_active_anon = val.parse().unwrap_or_default();
-            } else if let Some(val) = line.strip_prefix("nr_unevictable ") {
-                self.nr_unevictable = val.parse().unwrap_or_default();
+            if let Some(val) = line.strip_prefix("pswpin ") {
+                self.pswpin = val.parse().unwrap_or_default();
+            } else if let Some(val) = line.strip_prefix("pswpout ") {
+                self.pswpout = val.parse().unwrap_or_default();
                 break;
             }
         }
@@ -117,32 +162,40 @@ impl Proc {
 
 impl fmt::Display for Proc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        let [inactive_mb, active_mb, unevictable_mb] = [
-            self.nr_inactive_anon,
-            self.nr_active_anon,
-            self.nr_unevictable,
+        let [active, inactive, mlocked, swap_total, swap_free] = [
+            self.active,
+            self.inactive,
+            self.mlocked,
+            self.swap_total,
+            self.swap_free,
         ]
-        .map(|page_count| (page_count as usize) * self.page_size / 1024 / 1024);
+        .map(|kb| kb / 1024);
+
+        let [swap_in, swap_out] = [self.pswpin_delta, self.pswpout_delta]
+            .map(|page_count| (page_count as usize) * self.page_size / 1024 / 1024);
+
         write!(
             f,
-            "unevictable {} MB, anonymous {} MB, total {} MB",
-            unevictable_mb,
-            inactive_mb + active_mb,
-            unevictable_mb + inactive_mb + active_mb,
+            "locked {} MB, unlocked {} MB, swap {} MB, swap i/o +{}/+{} MB",
+            mlocked,
+            active + inactive,
+            swap_total - swap_free,
+            swap_in,
+            swap_out,
         )
     }
 }
 
 struct ProcSelf {
-    // VmRSS = RssAnon + RssFile + RssShmem, although we only use RssAnon
+    vm_lck: u64,
     vm_rss: u64,
-    // VmSwap
     vm_swap: u64,
 }
 
 impl ProcSelf {
     fn collect() -> Self {
         let mut pid = ProcSelf {
+            vm_lck: 0,
             vm_rss: 0,
             vm_swap: 0,
         };
@@ -166,7 +219,9 @@ impl ProcSelf {
                     .unwrap_or_default()
             };
 
-            if line.starts_with("VmRSS:") {
+            if line.starts_with("VmLck:") {
+                self.vm_lck = extract_val(&line);
+            } else if line.starts_with("VmRSS:") {
                 self.vm_rss = extract_val(&line);
             } else if line.starts_with("VmSwap:") {
                 self.vm_swap = extract_val(&line);
@@ -180,13 +235,14 @@ impl ProcSelf {
 
 impl fmt::Display for ProcSelf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        let [vm_rss_mb, vm_swap_mb] = [self.vm_rss, self.vm_swap].map(|kb| kb / 1024);
+        let [vm_lck, vm_rss, vm_swap] =
+            [self.vm_lck, self.vm_rss, self.vm_swap].map(|kb| kb / 1024);
         write!(
             f,
-            "rss {} MB, swap {} MB, total {} MB",
-            vm_rss_mb,
-            vm_swap_mb,
-            vm_rss_mb + vm_swap_mb,
+            "locked {} MB, unlocked {} MB, swap {} MB",
+            vm_lck,
+            vm_rss - vm_lck,
+            vm_swap,
         )
     }
 }
@@ -255,14 +311,17 @@ fn main() -> Result<(), io::Error> {
 
     let mut term = rustest::Term::new()?;
 
+    let mut sys_prev = None;
     loop {
-        let sys = Proc::collect();
+        let sys = Proc::collect(sys_prev);
         let pid = ProcSelf::collect();
 
-        term.cmd_fmt(format_args!("system: {}\r\n", &sys));
-        term.cmd_fmt(format_args!("self: {}\r\n", &pid));
-        term.cmd_fmt(format_args!("{}\r\n", &mlock));
+        term.cmd_fmt(format_args!("mlock:     {}\r\n", &mlock));
+        term.cmd_fmt(format_args!("proc self: {}\r\n", &pid));
+        term.cmd_fmt(format_args!("proc sys:  {}\r\n", &sys));
         term.cmd_flush();
+
+        sys_prev = Some(sys);
 
         match term_wait_action(&mut term) {
             Action::Redraw => (),
