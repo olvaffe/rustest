@@ -73,11 +73,15 @@ impl fmt::Display for Mlock {
 struct Proc {
     page_size: usize,
 
+    // pages that are mlock'ed
     mlocked: u64,
+    // swap usage
     swap_total: u64,
     swap_free: u64,
+    // pages that are anonymous and resident
     anon_pages: u64,
 
+    // accumulated pages swapped in/out to block devices
     pswpin: u64,
     pswpout: u64,
 
@@ -186,8 +190,11 @@ impl fmt::Display for Proc {
 }
 
 struct ProcSelf {
+    // pages that are mlock'ed
     vm_lck: u64,
-    vm_rss: u64,
+    // pages that are anonymous and resident
+    rss_anon: u64,
+    // pages that are anonymous and swapped out
     vm_swap: u64,
 }
 
@@ -195,7 +202,7 @@ impl ProcSelf {
     fn collect() -> Self {
         let mut pid = ProcSelf {
             vm_lck: 0,
-            vm_rss: 0,
+            rss_anon: 0,
             vm_swap: 0,
         };
 
@@ -220,8 +227,8 @@ impl ProcSelf {
 
             if line.starts_with("VmLck:") {
                 self.vm_lck = extract_val(&line);
-            } else if line.starts_with("VmRSS:") {
-                self.vm_rss = extract_val(&line);
+            } else if line.starts_with("RssAnon:") {
+                self.rss_anon = extract_val(&line);
             } else if line.starts_with("VmSwap:") {
                 self.vm_swap = extract_val(&line);
                 break;
@@ -234,13 +241,13 @@ impl ProcSelf {
 
 impl fmt::Display for ProcSelf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        let [vm_lck, vm_rss, vm_swap] =
-            [self.vm_lck, self.vm_rss, self.vm_swap].map(|kb| kb / 1024);
+        let [vm_lck, rss_anon, vm_swap] =
+            [self.vm_lck, self.rss_anon, self.vm_swap].map(|kb| kb / 1024);
         write!(
             f,
             "locked {:5} MB, unlocked {:5} MB, swap {:5} MB",
             vm_lck,
-            vm_rss - vm_lck,
+            rss_anon - vm_lck,
             vm_swap,
         )
     }
