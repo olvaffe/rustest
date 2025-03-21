@@ -1,11 +1,12 @@
 // Copyright 2025 Google LLC
 // SPDX-License-Identifier: MIT
 
+use crossterm::{cursor, event, execute, queue, terminal};
 use std::{
-    ffi, fs,
-    io::{self, Seek},
+    ffi, fmt, fs,
+    io::{self, Seek, Write},
     os::fd::{AsFd, AsRawFd, RawFd},
-    ptr, slice,
+    ptr, slice, time,
 };
 
 pub struct Mmap {
@@ -85,5 +86,74 @@ impl Drop for Mmap {
     fn drop(&mut self) {
         // SAFETY: all args are valid
         let _ = unsafe { libc::munmap(self.addr, self.len) };
+    }
+}
+
+pub struct Term {
+    writer: io::Stdout,
+}
+
+impl Term {
+    pub fn new() -> Result<Self, io::Error> {
+        let writer = Self::init()?;
+        Ok(Term { writer })
+    }
+
+    fn init() -> Result<io::Stdout, io::Error> {
+        terminal::enable_raw_mode()?;
+
+        let mut writer = io::stdout();
+        execute!(writer, cursor::Hide, cursor::SavePosition).inspect_err(|_| {
+            let _ = terminal::disable_raw_mode();
+        })?;
+
+        Ok(writer)
+    }
+
+    pub fn reset(&mut self) {
+        let _ = execute!(self.writer, cursor::Show);
+        let _ = terminal::disable_raw_mode();
+    }
+
+    pub fn cmd_clear(&mut self) {
+        let _ = queue!(
+            self.writer,
+            cursor::RestorePosition,
+            terminal::Clear(terminal::ClearType::FromCursorDown)
+        );
+    }
+
+    pub fn cmd_fmt(&mut self, args: fmt::Arguments) {
+        let _ = self.writer.write_fmt(args);
+    }
+
+    pub fn cmd_flush(&mut self) {
+        let _ = self.writer.flush();
+    }
+
+    pub fn poll(&mut self, timeout_ms: i32) -> Result<Option<event::KeyEvent>, io::Error> {
+        let dur = if timeout_ms >= 0 {
+            time::Duration::from_millis(timeout_ms as _)
+        } else {
+            time::Duration::MAX
+        };
+
+        event::poll(dur).and_then(|ready| {
+            if ready {
+                match event::read() {
+                    Ok(event::Event::Key(key)) => Ok(Some(key)),
+                    Ok(_) => Ok(None),
+                    Err(err) => Err(err),
+                }
+            } else {
+                Ok(None)
+            }
+        })
+    }
+}
+
+impl Drop for Term {
+    fn drop(&mut self) {
+        self.reset();
     }
 }

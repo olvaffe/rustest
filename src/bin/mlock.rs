@@ -1,7 +1,7 @@
 // Copyright 2025 Google LLC
 // SPDX-License-Identifier: MIT
 
-use crossterm::{cursor, event, execute, style, terminal};
+use crossterm::event;
 use std::{env, fmt, io};
 
 const CHUNK_SIZE_MB: usize = 256;
@@ -70,38 +70,26 @@ impl fmt::Display for Mlock {
 }
 
 enum Action {
-    Nop,
+    Redraw,
     Quit,
     Add(MlockHeap),
     Remove(MlockHeap),
     PageIn,
 }
 
-fn term_init() -> Result<(), io::Error> {
-    execute!(io::stdout(), cursor::Hide)?;
-    terminal::enable_raw_mode().inspect_err(|_| {
-        let _ = execute!(io::stdout(), cursor::Show);
-    })
-}
-
-fn term_restore() {
-    let _ = terminal::disable_raw_mode();
-    let _ = execute!(io::stdout(), cursor::Show);
-}
-
-fn term_wait_action() -> Action {
-    let ev = match event::read() {
-        Ok(event::Event::Key(ev)) => ev,
-        Ok(_) => return Action::Nop,
+fn term_wait_action(term: &mut rustest::Term) -> Action {
+    let key = match term.poll(-1) {
+        Ok(Some(key)) => key,
+        Ok(None) => return Action::Redraw,
         Err(_) => return Action::Quit,
     };
 
-    match ev.modifiers {
-        event::KeyModifiers::CONTROL => match ev.code {
+    match key.modifiers {
+        event::KeyModifiers::CONTROL => match key.code {
             event::KeyCode::Char('c') | event::KeyCode::Char('d') => Action::Quit,
-            _ => Action::Nop,
+            _ => Action::Redraw,
         },
-        event::KeyModifiers::SHIFT | event::KeyModifiers::NONE => match ev.code {
+        event::KeyModifiers::SHIFT | event::KeyModifiers::NONE => match key.code {
             event::KeyCode::Char('+') | event::KeyCode::Char('=') => Action::Add(MlockHeap::Locked),
             event::KeyCode::Char('-') | event::KeyCode::Char('_') => {
                 Action::Remove(MlockHeap::Locked)
@@ -114,9 +102,9 @@ fn term_wait_action() -> Action {
             }
             event::KeyCode::Char('p') | event::KeyCode::Char('P') => Action::PageIn,
             event::KeyCode::Char('q') | event::KeyCode::Esc => Action::Quit,
-            _ => Action::Nop,
+            _ => Action::Redraw,
         },
-        _ => Action::Nop,
+        _ => Action::Redraw,
     }
 }
 
@@ -143,17 +131,15 @@ fn main() -> Result<(), io::Error> {
 
     print_help();
 
-    term_init()?;
+    let mut term = rustest::Term::new()?;
 
     loop {
-        let _ = execute!(
-            io::stdout(),
-            terminal::Clear(terminal::ClearType::CurrentLine),
-            style::Print(format!("\r{}", &mlock))
-        );
+        term.cmd_clear();
+        term.cmd_fmt(format_args!("{}", &mlock));
+        term.cmd_flush();
 
-        match term_wait_action() {
-            Action::Nop => (),
+        match term_wait_action(&mut term) {
+            Action::Redraw => (),
             Action::Quit => break,
             Action::Add(heap) => {
                 let _ = mlock.add(heap);
@@ -162,14 +148,14 @@ fn main() -> Result<(), io::Error> {
                 mlock.remove(heap);
             }
             Action::PageIn => {
-                let _ = execute!(io::stdout(), style::Print(" ... paging in ..."));
+                term.cmd_fmt(format_args!(" ... paging in ..."));
+                term.cmd_flush();
                 mlock.page_in();
             }
         }
     }
 
-    term_restore();
-
+    term.reset();
     println!();
 
     Ok(())
