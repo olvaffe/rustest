@@ -256,7 +256,7 @@ enum Action {
 }
 
 fn term_wait_action(term: &mut rustest::Term) -> Action {
-    let key = match term.poll(-1) {
+    let key = match term.poll(1000) {
         Ok(Some(key)) => key,
         Ok(None) => return Action::Redraw,
         Err(_) => return Action::Quit,
