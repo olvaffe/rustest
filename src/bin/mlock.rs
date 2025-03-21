@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 use crossterm::event;
-use std::{env, fmt, io};
+use std::{
+    env, fmt, fs,
+    io::{self, BufRead},
+};
 
 const CHUNK_SIZE_MB: usize = 256;
 
@@ -65,6 +68,64 @@ impl fmt::Display for Mlock {
             locked_mb,
             unlocked_mb,
             locked_mb + unlocked_mb,
+        )
+    }
+}
+
+struct ProcSelf {
+    // VmRSS = RssAnon + RssFile + RssShmem, although we only use RssAnon
+    vm_rss: u64,
+    // VmSwap
+    vm_swap: u64,
+}
+
+impl ProcSelf {
+    fn collect() -> Self {
+        let mut pid = ProcSelf {
+            vm_rss: 0,
+            vm_swap: 0,
+        };
+
+        let _ = pid.collect_status();
+
+        pid
+    }
+
+    fn collect_status(&mut self) -> Result<(), io::Error> {
+        let fp = fs::File::open("/proc/self/status")?;
+        let reader = io::BufReader::new(fp);
+
+        for line in reader.lines() {
+            let line = line?;
+
+            let extract_val = |line: &str| {
+                line.split_ascii_whitespace()
+                    .nth(1)
+                    .and_then(|val| val.parse::<u64>().ok())
+                    .unwrap_or_default()
+            };
+
+            if line.starts_with("VmRSS:") {
+                self.vm_rss = extract_val(&line);
+            } else if line.starts_with("VmSwap:") {
+                self.vm_swap = extract_val(&line);
+                break;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::Display for ProcSelf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        let [vm_rss_mb, vm_swap_mb] = [self.vm_rss, self.vm_swap].map(|kb| kb / 1024);
+        write!(
+            f,
+            "rss {} MB, swap {} MB, total {} MB",
+            vm_rss_mb,
+            vm_swap_mb,
+            vm_rss_mb + vm_swap_mb,
         )
     }
 }
@@ -134,7 +195,10 @@ fn main() -> Result<(), io::Error> {
     let mut term = rustest::Term::new()?;
 
     loop {
-        term.cmd_fmt(format_args!("{}\r\n", &mlock));
+        let pid = ProcSelf::collect();
+
+        term.cmd_fmt(format_args!("app: {}\r\n", &mlock));
+        term.cmd_fmt(format_args!("/proc/self: {}\r\n", &pid));
         term.cmd_flush();
 
         match term_wait_action(&mut term) {
@@ -153,7 +217,7 @@ fn main() -> Result<(), io::Error> {
             }
         }
 
-        term.cmd_clear(1);
+        term.cmd_clear(2);
     }
 
     term.reset();
