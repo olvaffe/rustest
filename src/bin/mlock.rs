@@ -181,7 +181,7 @@ impl fmt::Display for Proc {
             f,
             "locked {:5} MB, unlocked {:5} MB, swap {:5} MB, swap i/o +{}/+{} MB",
             mlocked,
-            anon_pages - mlocked,
+            anon_pages.checked_sub(mlocked).unwrap_or(0),
             swap_total - swap_free,
             swap_in,
             swap_out,
